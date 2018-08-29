@@ -35,11 +35,10 @@
 #include "openni2_camera/openni2_device.h"
 
 #include <sensor_msgs/Image.h>
-
 #include <vector>
+#include <cuckoo_time_translator/DeviceTimeTranslator.h>
 
 #include "OpenNI.h"
-
 namespace openni2_wrapper
 {
 
@@ -64,7 +63,10 @@ public:
 
 private:
   openni::VideoFrameRef m_frame;
-
+  // Cuckoo Time translator object.
+  const int SECONDS_TO_NANOSECONDS = 1e9;
+  const int MILLISECONDS_TO_NANOSECONDS = 1e6;
+  std::unique_ptr<cuckoo_time_translator::UnwrappedDeviceTimeTranslator> device_time_translator_;
   FrameCallbackFunction callback_;
 
   bool user_device_timer_;

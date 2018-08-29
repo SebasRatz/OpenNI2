@@ -34,9 +34,7 @@
 #include "openni2_camera/openni2_timer_filter.h"
 
 #include <sensor_msgs/image_encodings.h>
-
 #include <ros/ros.h>
-
 #define TIME_FILTER_LENGTH 15
 
 namespace openni2_wrapper
@@ -49,6 +47,12 @@ OpenNI2FrameListener::OpenNI2FrameListener() :
     prev_time_stamp_(0.0)
 {
   ros::Time::init();
+  device_time_translator_.reset(new cuckoo_time_translator::
+  UnwrappedDeviceTimeTranslator(
+                cuckoo_time_translator::ClockParameters(SECONDS_TO_NANOSECONDS),
+                     "ns_cuckoo",
+                      cuckoo_time_translator::Defaults().setFilterAlgorithm(
+                          cuckoo_time_translator::FilterAlgorithm::ConvexHull)));
 }
 
 void OpenNI2FrameListener::setUseDeviceTimer(bool enable)
@@ -68,34 +72,30 @@ void OpenNI2FrameListener::onNewFrame(openni::VideoStream& stream)
     sensor_msgs::ImagePtr image(new sensor_msgs::Image);
 
     ros::Time ros_now = ros::Time::now();
+    bool translator_is_ready = false;
+    if (user_device_timer_)
+    {
+      uint64_t device_time = m_frame.getTimestamp();
+      double device_time_in_sec = static_cast<double>(device_time)/1000000.0;
+      device_time_translator_->update(static_cast<std::uint64_t>(
+          device_time_in_sec * SECONDS_TO_NANOSECONDS), ros_now); // get nanosecond precision
 
-    if (!user_device_timer_)
+      translator_is_ready = device_time_translator_->isReadyToTranslate();
+      if (translator_is_ready) {
+        image->header.stamp = device_time_translator_->translate(
+            device_time_in_sec * SECONDS_TO_NANOSECONDS);
+        ROS_INFO("Time interval between frames: %.4f ms", (float)((image->header.stamp.toSec()-prev_time_stamp_)*1000.0));
+        prev_time_stamp_ = image->header.stamp.toSec();
+      }
+    }
+
+    if (!user_device_timer_ || !translator_is_ready)
     {
       image->header.stamp = ros_now;
 
-      ROS_DEBUG("Time interval between frames: %.4f ms", (float)((ros_now.toSec()-prev_time_stamp_)*1000.0));
+      ROS_INFO("Time interval between frames: %.4f ms", (float)((ros_now.toSec()-prev_time_stamp_)*1000.0));
 
       prev_time_stamp_ = ros_now.toSec();
-    } else
-    {
-      uint64_t device_time = m_frame.getTimestamp();
-
-      double device_time_in_sec = static_cast<double>(device_time)/1000000.0;
-      double ros_time_in_sec = ros_now.toSec();
-
-      double time_diff = ros_time_in_sec-device_time_in_sec;
-
-      timer_filter_->addSample(time_diff);
-
-      double filtered_time_diff = timer_filter_->getMedian();
-
-      double corrected_timestamp = device_time_in_sec+filtered_time_diff;
-
-      image->header.stamp.fromSec(corrected_timestamp);
-
-      ROS_DEBUG("Time interval between frames: %.4f ms", (float)((corrected_timestamp-prev_time_stamp_)*1000.0));
-
-      prev_time_stamp_ = corrected_timestamp;
     }
 
     image->width = m_frame.getWidth();
